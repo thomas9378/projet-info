@@ -11,7 +11,7 @@ typedef struct {
     char interactions_description[500];
 } EcosystemContext;
 
-// Definir les structures de donnees pour le reseau trophique
+// Definir les structures de donnees pour le reseau trophiqe
 typedef struct {
     char name[50];
     char type[50];
