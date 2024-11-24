@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h> // For sleep function
-
 // Contexte de l'ecosysteme
 typedef struct {
     char ecosystem_name[100];
