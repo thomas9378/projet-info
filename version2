@@ -379,21 +379,27 @@ void dfs_food_chains(Graph *graph, int current, int target, int *visited, int *p
     (*path_index)--;
 }
 
-// Afficher les chaines alimentaires d'une espece donnee
-void display_food_chains(Graph *graph, int species_index) {
-    printf("\nChaines alimentaires pour l'espece %s:\n", graph->nodes[species_index].name);
-
-    int *path = (int *)malloc(graph->node_count * sizeof(int));
-    int path_index = 0;
-
-    // Trouver les producteurs primaires
-    int *producers = (int *)calloc(graph->node_count, sizeof(int));
-    int producer_count = 0;
-    for (int i = 0; i < graph->node_count; i++) {
-        if (graph->incoming_edges[i] == NULL) {
-            producers[producer_count++] = i;
-        }
+// Ajouter un noeud
+void add_node(Graph *graph, int index, char *name, char *type) {
+    strcpy(graph->nodes[index].name, name);
+    strcpy(graph->nodes[index].type, type);
+    graph->nodes[index].N = 100.0; // Initial population
+    // Set default growth rates based on type
+    if (strcmp(type, "Producteur primaire") == 0) {
+        graph->nodes[index].r = 0.5;
+    } else if (strcmp(type, "Consommateur primaire") == 0) {
+        graph->nodes[index].r = 0.4;
+    } else if (strcmp(type, "Consommateur secondaire") == 0) {
+        graph->nodes[index].r = 0.3;
+    } else if (strcmp(type, "Consommateur tertiaire") == 0) {
+        graph->nodes[index].r = 0.2;
+    } else if (strcmp(type, "Decomposeur") == 0) {
+        graph->nodes[index].r = 0.2;
+    } else {
+        graph->nodes[index].r = 0.1;
     }
+    graph->nodes[index].K = 100.0; // Default carrying capacity (will be updated)
+}
 
     int *visited = (int *)calloc(graph->node_count, sizeof(int));
 
