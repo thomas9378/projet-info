@@ -1,0 +1,844 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h> // For sleep function
+
+// Contexte de l'ecosysteme
+typedef struct {
+    char ecosystem_name[100];
+    char region[100];
+    char climate[100];
+    char interactions_description[500];
+} EcosystemContext;
+
+// Definir les structures de donnees pour le reseau trophique
+typedef struct {
+    char name[50];
+    char type[50];
+    double N; // Population size
+    double r; // Growth rate
+    double K; // Carrying capacity
+} Node;
+
+typedef struct Edge {
+    int from;  // Index du sommet source
+    int to;    // Index du sommet cible
+    float weight; // Predation coefficient
+    struct Edge *next; // Pour les listes d'adjacence
+} Edge;
+
+// Reseau trophique
+typedef struct {
+    Node *nodes;
+    Edge **adjacency_list; // Listes d'adjacence pour chaque noeud (arcs sortants)
+    Edge **incoming_edges; // Listes d'adjacence pour les arcs entrants
+    int node_count;
+    int edge_count;
+    EcosystemContext context; // Ajout du contexte
+} Graph;
+
+// Prototypes des fonctions
+Graph *create_graph(int node_count);
+void add_node(Graph *graph, int index, char *name, char *type);
+void add_edge(Graph *graph, int from, int to, float weight);
+void print_graph(Graph *graph);
+void print_successors_predecessors(Graph *graph);
+void check_connectivity(Graph *graph);
+void dfs_connectivity(Graph *graph, int node, int *visited, int component);
+void find_special_nodes(Graph *graph);
+void display_food_chains(Graph *graph, int species_index);
+void dfs_food_chains(Graph *graph, int current, int target, int *visited, int *path, int *path_index);
+void calculate_trophic_levels(Graph *graph);
+double compute_level(Graph *graph, int node, double *levels);
+void calculate_complexity(Graph *graph);
+void calculate_betweenness_centrality(Graph *graph);
+void simulate_species_disappearance(Graph *graph);
+void free_graph(Graph *graph);
+Graph *read_graph_from_file(const char *filename);
+void set_ecosystem_context(Graph *graph, const char *filename);
+void simulate_population_dynamics(Graph *graph);
+void modify_species_parameters(Graph *graph);
+
+int main() {
+    char filename[100];
+    printf("Entrez le nom du fichier graphe:\n- foret.txt (simple)\n- jungle.txt (intermediaire)\n- ocean.txt (complexe)\n");
+    scanf("%s", filename);
+
+    Graph *graph = read_graph_from_file(filename);
+
+    // Definir le contexte en fonction du fichier choisi
+    set_ecosystem_context(graph, filename);
+
+    print_graph(graph);
+    print_successors_predecessors(graph);
+    calculate_complexity(graph);
+
+    // Verification de la connexite
+    check_connectivity(graph);
+
+    // Trouver les sommets particuliers
+    find_special_nodes(graph);
+
+    // Calculer les niveaux trophiques
+    calculate_trophic_levels(graph);
+
+    // Calculer la centralite d'intermediarite
+    calculate_betweenness_centrality(graph);
+
+    // Simuler la disparition d'une espece
+    simulate_species_disappearance(graph);
+
+    // Modifier les parametres des especes
+    modify_species_parameters(graph);
+
+    // Simuler la dynamique des populations
+    simulate_population_dynamics(graph);
+
+    // Afficher les chaines alimentaires d'une espece donnee
+    char species_name[50];
+    printf("\nEntrez le nom de l'espece pour afficher ses chaines alimentaires: ");
+    scanf("%s", species_name);
+
+    // Trouver l'index de l'espece
+    int species_index = -1;
+    for (int i = 0; i < graph->node_count; i++) {
+        if (strcmp(graph->nodes[i].name, species_name) == 0) {
+            species_index = i;
+            break;
+        }
+    }
+
+    if (species_index != -1) {
+        display_food_chains(graph, species_index);
+    } else {
+        printf("Espece non trouvee.\n");
+    }
+
+    free_graph(graph);
+
+    return 0;
+}
+
+// Initialisation du graphe
+Graph *create_graph(int node_count) {
+    Graph *graph = (Graph *)malloc(sizeof(Graph));
+    graph->nodes = (Node *)malloc(node_count * sizeof(Node));
+    graph->adjacency_list = (Edge **)malloc(node_count * sizeof(Edge *));
+    graph->incoming_edges = (Edge **)malloc(node_count * sizeof(Edge *));
+    for (int i = 0; i < node_count; i++) {
+        graph->adjacency_list[i] = NULL;
+        graph->incoming_edges[i] = NULL;
+    }
+    graph->node_count = node_count;
+    graph->edge_count = 0;
+    // Initialiser le contexte a des chaines vides
+    strcpy(graph->context.ecosystem_name, "");
+    strcpy(graph->context.region, "");
+    strcpy(graph->context.climate, "");
+    strcpy(graph->context.interactions_description, "");
+    return graph;
+}
+
+// Ajouter un noeud
+void add_node(Graph *graph, int index, char *name, char *type) {
+    strcpy(graph->nodes[index].name, name);
+    strcpy(graph->nodes[index].type, type);
+    graph->nodes[index].N = 100.0; // Initial population
+    // Set default growth rates based on type
+    if (strcmp(type, "Producteur primaire") == 0) {
+        graph->nodes[index].r = 0.5;
+    } else if (strcmp(type, "Consommateur primaire") == 0) {
+        graph->nodes[index].r = 0.4;
+    } else if (strcmp(type, "Consommateur secondaire") == 0) {
+        graph->nodes[index].r = 0.3;
+    } else if (strcmp(type, "Consommateur tertiaire") == 0) {
+        graph->nodes[index].r = 0.2;
+    } else if (strcmp(type, "Decomposeur") == 0) {
+        graph->nodes[index].r = 0.2;
+    } else {
+        graph->nodes[index].r = 0.1;
+    }
+    graph->nodes[index].K = 100.0; // Default carrying capacity (will be updated)
+}
+
+// Ajouter un arc
+void add_edge(Graph *graph, int from, int to, float weight) {
+    // Ajouter a la liste des arcs sortants
+    Edge *edge = (Edge *)malloc(sizeof(Edge));
+    edge->from = from;
+    edge->to = to;
+    edge->weight = weight;
+    edge->next = graph->adjacency_list[from];
+    graph->adjacency_list[from] = edge;
+
+    // Ajouter a la liste des arcs entrants
+    Edge *incoming_edge = (Edge *)malloc(sizeof(Edge));
+    incoming_edge->from = from;
+    incoming_edge->to = to;
+    incoming_edge->weight = weight;
+    incoming_edge->next = graph->incoming_edges[to];
+    graph->incoming_edges[to] = incoming_edge;
+
+    graph->edge_count++;
+}
+
+// Definir le contexte en fonction du nom du fichier
+void set_ecosystem_context(Graph *graph, const char *filename) {
+    if (strcmp(filename, "foret.txt") == 0) {
+        strcpy(graph->context.ecosystem_name, "Foret Temperee");
+        strcpy(graph->context.region, "Europe de l'Ouest");
+        strcpy(graph->context.climate, "Climat Tempere");
+        strcpy(graph->context.interactions_description, "Les interactions incluent la predation et le parasitisme.");
+    } else if (strcmp(filename, "jungle.txt") == 0) {
+        strcpy(graph->context.ecosystem_name, "Jungle Tropicale");
+        strcpy(graph->context.region, "Amazonie");
+        strcpy(graph->context.climate, "Climat Tropical Humide");
+        strcpy(graph->context.interactions_description, "Les interactions incluent la predation, le mutualisme et la competition pour les ressources.");
+    } else if (strcmp(filename, "ocean.txt") == 0) {
+        strcpy(graph->context.ecosystem_name, "Ocean Pacifique Nord");
+        strcpy(graph->context.region, "Pacifique Nord");
+        strcpy(graph->context.climate, "Climat Marin Tempere a Froid");
+        strcpy(graph->context.interactions_description, "Les interactions incluent la predation, le parasitisme et le commensalisme.");
+    } else {
+        strcpy(graph->context.ecosystem_name, "Ecosysteme Inconnu");
+        strcpy(graph->context.region, "Region Inconnue");
+        strcpy(graph->context.climate, "Climat Inconnu");
+        strcpy(graph->context.interactions_description, "Description des interactions non disponible.");
+    }
+}
+
+// Afficher le graphe avec contexte
+void print_graph(Graph *graph) {
+    printf("\nContexte de l'ecosysteme:\n");
+    printf("Nom de l'ecosysteme: %s\n", graph->context.ecosystem_name);
+    printf("Region: %s\n", graph->context.region);
+    printf("Climat: %s\n", graph->context.climate);
+    printf("Description des interactions: %s\n\n", graph->context.interactions_description);
+
+    printf("Noeuds:\n");
+    for (int i = 0; i < graph->node_count; i++) {
+        printf("%d: %s (%s)\n", i, graph->nodes[i].name, graph->nodes[i].type);
+    }
+    printf("\nArcs:\n");
+    for (int i = 0; i < graph->node_count; i++) {
+        Edge *edge = graph->adjacency_list[i];
+        while (edge != NULL) {
+            printf("%s -> %s (poids: %.4f)\n",
+                   graph->nodes[edge->from].name,
+                   graph->nodes[edge->to].name,
+                   edge->weight);
+            edge = edge->next;
+        }
+    }
+}
+
+// Afficher les successeurs et predecesseurs de chaque noeud
+void print_successors_predecessors(Graph *graph) {
+    for (int i = 0; i < graph->node_count; i++) {
+        printf("\nNoeud %d: %s\n", i, graph->nodes[i].name);
+
+        // Successeurs
+        printf("Successeurs: ");
+        Edge *edge = graph->adjacency_list[i];
+        if (edge == NULL) {
+            printf("Aucun");
+        } else {
+            while (edge != NULL) {
+                printf("%s ", graph->nodes[edge->to].name);
+                edge = edge->next;
+            }
+        }
+        printf("\n");
+
+        // Predecesseurs
+        printf("Predecesseurs: ");
+        Edge *incoming = graph->incoming_edges[i];
+        if (incoming == NULL) {
+            printf("Aucun");
+        } else {
+            while (incoming != NULL) {
+                printf("%s ", graph->nodes[incoming->from].name);
+                incoming = incoming->next;
+            }
+        }
+        printf("\n");
+    }
+}
+
+// Fonction pour le parcours en profondeur (dfs) pour la connexite
+void dfs_connectivity(Graph *graph, int node, int *visited, int component) {
+    visited[node] = component;
+    Edge *edge = graph->adjacency_list[node];
+    while (edge != NULL) {
+        if (!visited[edge->to]) {
+            dfs_connectivity(graph, edge->to, visited, component);
+        }
+        edge = edge->next;
+    }
+    // Considerer les arcs inverses pour la connexite faible
+    Edge *incoming = graph->incoming_edges[node];
+    while (incoming != NULL) {
+        if (!visited[incoming->from]) {
+            dfs_connectivity(graph, incoming->from, visited, component);
+        }
+        incoming = incoming->next;
+    }
+}
+
+// Verification de la connexite du graphe
+void check_connectivity(Graph *graph) {
+    int *visited = (int *)calloc(graph->node_count, sizeof(int));
+    int component = 0;
+
+    for (int i = 0; i < graph->node_count; i++) {
+        if (!visited[i]) {
+            component++;
+            dfs_connectivity(graph, i, visited, component);
+        }
+    }
+
+    if (component == 1) {
+        printf("\nLe reseau est connexe.\n");
+    } else {
+        printf("\nLe reseau n'est pas connexe. Il y a %d composantes connexes.\n", component);
+        // Afficher les composantes connexes
+        for (int c = 1; c <= component; c++) {
+            printf("Composante %d: ", c);
+            for (int i = 0; i < graph->node_count; i++) {
+                if (visited[i] == c) {
+                    printf("%s ", graph->nodes[i].name);
+                }
+            }
+            printf("\n");
+        }
+    }
+
+    free(visited);
+}
+
+// Trouver et afficher les sommets particuliers
+void find_special_nodes(Graph *graph) {
+    printf("\nSommets particuliers:\n");
+
+    // Les premiers maillons des chaines alimentaires (producteurs primaires)
+    printf("Producteurs primaires (sans predecesseurs):\n");
+    for (int i = 0; i < graph->node_count; i++) {
+        if (graph->incoming_edges[i] == NULL) {
+            printf("%s\n", graph->nodes[i].name);
+        }
+    }
+
+    // Les derniers maillons des chaines alimentaires (sans successeurs)
+    printf("\nEspeces sans predateurs (sans successeurs):\n");
+    for (int i = 0; i < graph->node_count; i++) {
+        if (graph->adjacency_list[i] == NULL) {
+            printf("%s\n", graph->nodes[i].name);
+        }
+    }
+
+    // Especes n'ayant qu'une seule source d'alimentation
+    printf("\nEspeces avec une seule source d'alimentation:\n");
+    for (int i = 0; i < graph->node_count; i++) {
+        int in_degree = 0;
+        Edge *incoming = graph->incoming_edges[i];
+        while (incoming != NULL) {
+            in_degree++;
+            incoming = incoming->next;
+        }
+        if (in_degree == 1) {
+            printf("%s\n", graph->nodes[i].name);
+        }
+    }
+}
+
+// Fonction recursive pour afficher les chaines alimentaires
+void dfs_food_chains(Graph *graph, int current, int target, int *visited, int *path, int *path_index) {
+    visited[current] = 1;
+    path[(*path_index)++] = current;
+
+    if (current == target) {
+        // Afficher le chemin
+        for (int i = 0; i < *path_index; i++) {
+            printf("%s", graph->nodes[path[i]].name);
+            if (i < *path_index - 1) {
+                printf(" -> ");
+            }
+        }
+        printf("\n");
+    } else {
+        Edge *edge = graph->adjacency_list[current];
+        while (edge != NULL) {
+            if (!visited[edge->to]) {
+                dfs_food_chains(graph, edge->to, target, visited, path, path_index);
+            }
+            edge = edge->next;
+        }
+    }
+
+    visited[current] = 0;
+    (*path_index)--;
+}
+
+// Afficher les chaines alimentaires d'une espece donnee
+void display_food_chains(Graph *graph, int species_index) {
+    printf("\nChaines alimentaires pour l'espece %s:\n", graph->nodes[species_index].name);
+
+    int *path = (int *)malloc(graph->node_count * sizeof(int));
+    int path_index = 0;
+
+    // Trouver les producteurs primaires
+    int *producers = (int *)calloc(graph->node_count, sizeof(int));
+    int producer_count = 0;
+    for (int i = 0; i < graph->node_count; i++) {
+        if (graph->incoming_edges[i] == NULL) {
+            producers[producer_count++] = i;
+        }
+    }
+
+    int *visited = (int *)calloc(graph->node_count, sizeof(int));
+
+    // Pour chaque producteur primaire, chercher des chemins vers l'espece cible
+    for (int i = 0; i < producer_count; i++) {
+        dfs_food_chains(graph, producers[i], species_index, visited, path, &path_index);
+    }
+
+    free(visited);
+    free(path);
+    free(producers);
+}
+
+// Fonction recursive pour calculer le niveau trophique
+double compute_level(Graph *graph, int node, double *levels) {
+    if (levels[node] != -1.0) {
+        return levels[node];
+    }
+
+    Edge *edge = graph->incoming_edges[node];
+    if (edge == NULL) {
+        // Pas de proies, c'est un producteur primaire
+        levels[node] = 1.0;
+        return levels[node];
+    } else {
+        // A des proies, niveau trophique = 1 + moyenne des niveaux trophiques des proies
+        int num_prey = 0;
+        double sum_levels = 0.0;
+        while (edge != NULL) {
+            int prey_node = edge->from;
+            double prey_level = compute_level(graph, prey_node, levels);
+            sum_levels += prey_level;
+            num_prey++;
+            edge = edge->next;
+        }
+        levels[node] = 1.0 + sum_levels / num_prey;
+        return levels[node];
+    }
+}
+
+// Calculer les niveaux trophiques des especes
+void calculate_trophic_levels(Graph *graph) {
+    double *levels = (double *)malloc(graph->node_count * sizeof(double));
+    for (int i = 0; i < graph->node_count; i++) {
+        levels[i] = -1.0; // Niveau inconnu
+    }
+
+    // Calculer les niveaux pour tous les noeuds
+    for (int i = 0; i < graph->node_count; i++) {
+        compute_level(graph, i, levels);
+    }
+
+    // Afficher les niveaux trophiques
+    printf("\nNiveaux trophiques des especes:\n");
+    double max_level = 0.0;
+    for (int i = 0; i < graph->node_count; i++) {
+        printf("%s: Niveau %.2f\n", graph->nodes[i].name, levels[i]);
+        if (levels[i] > max_level) {
+            max_level = levels[i];
+        }
+    }
+    printf("\nNiveau trophique maximal: %.2f\n", max_level);
+
+    free(levels);
+}
+
+// Calculer et afficher les mesures de complexite
+void calculate_complexity(Graph *graph) {
+    int num_species = graph->node_count;
+    int num_links = graph->edge_count;
+    float link_density = (float)num_links / (num_species * (num_species - 1));
+
+    // Calcul de la distribution des degres
+    int *in_degree = (int *)calloc(graph->node_count, sizeof(int));
+    int *out_degree = (int *)calloc(graph->node_count, sizeof(int));
+    for (int i = 0; i < graph->node_count; i++) {
+        Edge *edge = graph->adjacency_list[i];
+        while (edge != NULL) {
+            out_degree[i]++;
+            in_degree[edge->to]++;
+            edge = edge->next;
+        }
+    }
+
+    printf("\nMesures de complexite:\n");
+    printf("Nombre d'especes: %d\n", num_species);
+    printf("Densite de liaison: %.4f\n", link_density);
+    printf("Distribution des degres (Entrant, Sortant):\n");
+    for (int i = 0; i < graph->node_count; i++) {
+        printf("%s: (%d, %d)\n", graph->nodes[i].name, in_degree[i], out_degree[i]);
+    }
+
+    free(in_degree);
+    free(out_degree);
+}
+
+// Calculer la centralite d'intermediarite
+void calculate_betweenness_centrality(Graph *graph) {
+    double *betweenness = (double *)calloc(graph->node_count, sizeof(double));
+
+    // Implementation de l'algorithme de Brandes pour les graphes diriges
+    for (int s = 0; s < graph->node_count; s++) {
+        // Piles pour l'ordre des visites
+        int *stack = (int *)malloc(graph->node_count * sizeof(int));
+        int stack_size = 0;
+
+        // Files pour BFS
+        int *queue = (int *)malloc(graph->node_count * sizeof(int));
+        int queue_start = 0, queue_end = 0;
+
+        // Tableaux pour les distances et les predecesseurs
+        int *dist = (int *)malloc(graph->node_count * sizeof(int));
+        int *sigma = (int *)malloc(graph->node_count * sizeof(int));
+        int **pred = (int **)malloc(graph->node_count * sizeof(int *));
+        int *pred_count = (int *)calloc(graph->node_count, sizeof(int));
+
+        for (int i = 0; i < graph->node_count; i++) {
+            dist[i] = -1;
+            sigma[i] = 0;
+            pred[i] = (int *)malloc(graph->node_count * sizeof(int));
+        }
+
+        dist[s] = 0;
+        sigma[s] = 1;
+        queue[queue_end++] = s;
+
+        while (queue_start < queue_end) {
+            int v = queue[queue_start++];
+            stack[stack_size++] = v;
+
+            Edge *edge = graph->adjacency_list[v];
+            while (edge != NULL) {
+                int w = edge->to;
+                if (dist[w] < 0) {
+                    dist[w] = dist[v] + 1;
+                    queue[queue_end++] = w;
+                }
+                if (dist[w] == dist[v] + 1) {
+                    sigma[w] += sigma[v];
+                    pred[w][pred_count[w]++] = v;
+                }
+                edge = edge->next;
+            }
+        }
+
+        double *delta = (double *)calloc(graph->node_count, sizeof(double));
+
+        while (stack_size > 0) {
+            int w = stack[--stack_size];
+            for (int i = 0; i < pred_count[w]; i++) {
+                int v = pred[w][i];
+                delta[v] += ((double)sigma[v] / sigma[w]) * (1.0 + delta[w]);
+            }
+            if (w != s) {
+                betweenness[w] += delta[w];
+            }
+        }
+
+        // Liberer la memoire
+        for (int i = 0; i < graph->node_count; i++) {
+            free(pred[i]);
+        }
+        free(pred);
+        free(pred_count);
+        free(delta);
+        free(sigma);
+        free(dist);
+        free(queue);
+        free(stack);
+    }
+
+    // Afficher les centralites d'intermediarite
+    printf("\nCentralite d'intermediarite des especes:\n");
+    for (int i = 0; i < graph->node_count; i++) {
+        printf("%s: %.2f\n", graph->nodes[i].name, betweenness[i]);
+    }
+
+    free(betweenness);
+}
+
+// Simuler la disparition d'une espece
+void simulate_species_disappearance(Graph *graph) {
+    char species_name[50];
+    printf("\nEntrez le nom de l'espece a simuler la disparition: ");
+    scanf("%s", species_name);
+
+    // Trouver l'index de l'espece
+    int index = -1;
+    for (int i = 0; i < graph->node_count; i++) {
+        if (strcmp(graph->nodes[i].name, species_name) == 0) {
+            index = i;
+            break;
+        }
+    }
+
+    if (index == -1) {
+        printf("Espece non trouvee.\n");
+        return;
+    }
+
+    // Creer un nouveau graphe sans cette espece
+    Graph *new_graph = create_graph(graph->node_count - 1);
+    new_graph->context = graph->context; // Copier le contexte
+    int *mapping = (int *)malloc(graph->node_count * sizeof(int));
+    int new_index = 0;
+    for (int i = 0; i < graph->node_count; i++) {
+        if (i != index) {
+            add_node(new_graph, new_index, graph->nodes[i].name, graph->nodes[i].type);
+            // Copier les parametres
+            new_graph->nodes[new_index].N = graph->nodes[i].N;
+            new_graph->nodes[new_index].r = graph->nodes[i].r;
+            new_graph->nodes[new_index].K = graph->nodes[i].K;
+            mapping[i] = new_index++;
+        } else {
+            mapping[i] = -1;
+        }
+    }
+
+    // Ajouter les arcs en excluant ceux lies a l'espece supprimee
+    for (int i = 0; i < graph->node_count; i++) {
+        if (mapping[i] == -1) continue;
+        Edge *edge = graph->adjacency_list[i];
+        while (edge != NULL) {
+            if (mapping[edge->to] != -1) {
+                add_edge(new_graph, mapping[i], mapping[edge->to], edge->weight);
+            }
+            edge = edge->next;
+        }
+    }
+
+    printf("\nGraphe apres la disparition de %s:\n", species_name);
+    print_graph(new_graph);
+
+    // Recalculer les mesures de complexite
+    calculate_complexity(new_graph);
+
+    // Verifier la connexite du nouveau graphe
+    check_connectivity(new_graph);
+
+    // Mettre a jour le graphe original
+    free_graph(graph);
+    *graph = *new_graph;
+    free(new_graph);
+
+    free(mapping);
+}
+
+// Simuler la dynamique des populations
+void simulate_population_dynamics(Graph *graph) {
+    int steps;
+    double dt = 1.0; // Time step
+    printf("\nEntrez le nombre d'iterations pour la simulation: ");
+    scanf("%d", &steps);
+
+    for (int t = 0; t < steps; t++) {
+        // Tableau temporaire pour stocker les nouvelles populations
+        double *new_N = (double *)malloc(graph->node_count * sizeof(double));
+
+        // D'abord, calculer les capacites de charge pour les consommateurs
+        for (int i = 0; i < graph->node_count; i++) {
+            Node *node = &graph->nodes[i];
+            // Pour les producteurs (pas de proies), K est constant
+            if (graph->incoming_edges[i] == NULL) {
+                node->K = 100.0; // Peut etre ajuste
+            } else {
+                // Pour les consommateurs, K depend des populations des proies
+                double K = 0.0;
+                Edge *incoming = graph->incoming_edges[i];
+                while (incoming != NULL) {
+                    int prey_index = incoming->from;
+                    Node *prey = &graph->nodes[prey_index];
+                    K += incoming->weight * prey->N;
+                    incoming = incoming->next;
+                }
+                node->K = K;
+                if (node->K == 0.0) {
+                    node->K = 1.0; // Pour eviter la division par zero
+                }
+            }
+        }
+
+        // Maintenant, mettre a jour les populations
+        for (int i = 0; i < graph->node_count; i++) {
+            Node *node = &graph->nodes[i];
+            double Nt = node->N;
+            double r = node->r;
+            double K = node->K;
+            double predation_loss = 0.0;
+
+            // Calculer la perte due a la predation (Corrected)
+            Edge *outgoing = graph->adjacency_list[i];
+            while (outgoing != NULL) {
+                int predator_index = outgoing->to;
+                Node *predator = &graph->nodes[predator_index];
+                predation_loss += outgoing->weight * Nt * predator->N;
+                outgoing = outgoing->next;
+            }
+
+            // Mettre a jour la population
+            double Nt1 = Nt + r * Nt * (1.0 - Nt / K) * dt - predation_loss * dt;
+
+            // S'assurer que la population ne devienne pas negative
+            if (Nt1 < 0.0) {
+                Nt1 = 0.0;
+            }
+
+            new_N[i] = Nt1;
+        }
+
+        // Mettre a jour toutes les populations
+        for (int i = 0; i < graph->node_count; i++) {
+            graph->nodes[i].N = new_N[i];
+        }
+
+        free(new_N);
+
+        // Afficher les populations
+        printf("\nEtape %d:\n", t + 1);
+        for (int i = 0; i < graph->node_count; i++) {
+            printf("%s: Population = %.2f\n", graph->nodes[i].name, graph->nodes[i].N);
+        }
+    }
+}
+
+// Modifier les parametres des especes
+void modify_species_parameters(Graph *graph) {
+    char species_name[50];
+    printf("\nEntrez le nom de l'espece a modifier: ");
+    scanf("%s", species_name);
+
+    // Trouver l'index de l'espece
+    int index = -1;
+    for (int i = 0; i < graph->node_count; i++) {
+        if (strcmp(graph->nodes[i].name, species_name) == 0) {
+            index = i;
+            break;
+        }
+    }
+
+    if (index == -1) {
+        printf("Espece non trouvee.\n");
+        return;
+    }
+
+    printf("Espece trouvee: %s\n", graph->nodes[index].name);
+    printf("Population actuelle: %.2f\n", graph->nodes[index].N);
+    printf("Taux de croissance actuel: %.2f\n", graph->nodes[index].r);
+
+    printf("Entrez la nouvelle population: ");
+    scanf("%lf", &graph->nodes[index].N);
+
+    printf("Entrez le nouveau taux de croissance: ");
+    scanf("%lf", &graph->nodes[index].r);
+
+    printf("Parametres mis a jour pour %s.\n", graph->nodes[index].name);
+}
+
+// Liberer la memoire
+void free_graph(Graph *graph) {
+    for (int i = 0; i < graph->node_count; i++) {
+        Edge *edge = graph->adjacency_list[i];
+        while (edge != NULL) {
+            Edge *temp = edge;
+            edge = edge->next;
+            free(temp);
+        }
+        Edge *incoming = graph->incoming_edges[i];
+        while (incoming != NULL) {
+            Edge *temp = incoming;
+            incoming = incoming->next;
+            free(temp);
+        }
+    }
+    free(graph->adjacency_list);
+    free(graph->incoming_edges);
+    free(graph->nodes);
+    // Do not free graph itself here as it might be used after species disappearance
+    // free(graph);
+}
+
+// Lire le graphe depuis un fichier sans inclure le contexte
+Graph *read_graph_from_file(const char *filename) {
+    FILE *file = fopen(filename, "r");
+    if (file == NULL) {
+        printf("Erreur lors de l'ouverture du fichier %s\n", filename);
+        exit(1);
+    }
+
+    int node_count, edge_count;
+
+    // Lire le nombre de noeuds et d'arcs
+    if (fscanf(file, "%d %d\n", &node_count, &edge_count) != 2) {
+        printf("Erreur lors de la lecture du nombre de noeuds et d'arcs\n");
+        fclose(file);
+        exit(1);
+    }
+
+    // Creer le graphe
+    Graph *graph = create_graph(node_count);
+
+    // Lire les noeuds
+    char line[256];
+    for (int i = 0; i < node_count; i++) {
+        if (fgets(line, sizeof(line), file) == NULL) {
+            printf("Erreur lors de la lecture du noeud %d\n", i);
+            fclose(file);
+            exit(1);
+        }
+        // Supprimer le caractere de nouvelle ligne
+        line[strcspn(line, "\n")] = '\0';
+
+        // Diviser la ligne au niveau du point-virgule
+        char *name = strtok(line, ";");
+        char *type = strtok(NULL, ";");
+
+        if (name == NULL || type == NULL) {
+            printf("Erreur de format dans le noeud %d\n", i);
+            fclose(file);
+            exit(1);
+        }
+
+        // Ajouter le noeud au graphe
+        add_node(graph, i, name, type);
+    }
+
+    // Lire les arcs
+    for (int i = 0; i < edge_count; i++) {
+        if (fgets(line, sizeof(line), file) == NULL) {
+            printf("Erreur lors de la lecture de l'arc %d\n", i);
+            fclose(file);
+            exit(1);
+        }
+
+        int from, to;
+        float weight;
+        if (sscanf(line, "%d %d %f", &from, &to, &weight) != 3) {
+            printf("Erreur de format dans l'arc %d\n", i);
+            fclose(file);
+            exit(1);
+        }
+
+        // Ajouter l'arc au graphe
+        add_edge(graph, from, to, weight);
+    }
+
+    fclose(file);
+    return graph;
+}
